@@ -1,0 +1,386 @@
+Introduction to Go generics
+6 December 2022
+
+Julien Cretel
+jcretel-infosec@protonmail.com
+https://jub0bs.com
+@jub0bs
+
+
+
+* A motivating example for generic functions
+
+
+
+* Retrieving the first element (if any) of a slice
+
+\... is a common operation in Go:
+
+.play -edit src/first.go /^//START/,/^//END/
+
+
+
+* A dedicated function for []int
+
+\... may improve readability and ergonomy:
+
+.play -edit src/firstintfunc.go /^//START/,/^//END/
+
+What if we're dealing with a slice whose element type isn't `int`, though?
+
+
+
+* A dedicated function for []string
+
+.play -edit src/firststringfunc.go /^//START/,/^//END/
+
+However, duplicating the logic for the other slice types we need to support isn't very [[https://en.wikipedia.org/wiki/Don%27t_repeat_yourself][DRY]], and it forces us to be imaginative in order to avoid a name collision.
+
+
+
+* A more general-purpose but awkward function
+
+We could make our `first` function take a parameter of type `interface{}` and use either reflection or type assertions/switches to access the interface's dynamic type:
+
+.play -edit src/firstanyfunc.go /^//START/,/^//END/
+
+But we'd lose out on type safety, performance, ergonomy, and our code still suffers from code duplication (we've only displaced the problem).
+
+: empty interface: the least specific type in Go
+: unclear what we should do if an unsupported type is passed to first
+: performance: reflection is not for you, interface boxing
+: ergonomy: we get an empty interface back
+: We could use `go`generate` to generate all the variants of our `first` function for the different slice types we need to support. But that requires a pre-compilation step...
+
+
+
+* A motivating example for generic types
+
+
+
+* A mathematical set
+
+\... is a unordered collection whose elements are unique.
+
+Go lacks a built-in set type, but a set can be implemented with the built-in `map` type, where map keys represent the elements of the set:
+
+.play -edit src/mapset.go /^//START/,/^//END/
+
+
+
+* A custom type for sets of ints
+
+Again, we could declare a custom type to represent a mathematical set of `int`s:
+
+.code -edit src/mapintset.go /^//START1/,/^//END1/
+
+
+
+* A custom type for sets of ints (cont'd)
+
+Readability and ergonomy improves:
+
+.play -edit src/mapintset.go /^//START2/,/^//END2/
+
+But what if we wanted a set whose element type isn't `int`?
+
+
+
+* Clamour for generics in Go
+
+
+
+* 2016
+
+[[https://go.dev/blog/survey2016-results][Go 2016 Survey Results]]
+
+.image img/survey_2016.png _ 800
+
+
+
+* 2017
+
+[[https://go.dev/blog/survey2017-results][Go 2017 Survey Results]]
+
+.image img/survey_2017.png _ 800
+
+
+
+* 2018
+
+[[https://go.dev/blog/survey2018-results][Go 2018 Survey Results]]
+
+.image img/survey_2018.png _ 800
+
+
+
+* 2019
+
+[[https://go.dev/blog/survey2019-results][Go 2019 Survey Results]]
+
+.image img/survey_2019.png _ 800
+
+
+
+* 2020
+
+[[https://go.dev/blog/survey2020-results][Go 2020 Survey Results]]
+
+.image img/survey_2020.png 480 _
+
+
+
+* 2021
+
+[[https://go.dev/blog/survey2021-results][Go 2021 Survey Results]]
+
+.image img/survey_2021.png _ 800
+
+
+
+* Generics: a contentious and difficult feature
+
+Generics finally landed in Go v1.18 (Feb. 2022). Why did it take so long?
+
+- Some people worried that generics would compromise Go's agenda of simplicity.
+- Others had doubts about whether generics were really needed in Go.
+- The Go team experienced some trouble retrofitting Go to add generics without breaking the [[https://go.dev/doc/go1compat][Go 1.0 compability promise]].
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/mistake.svg 200 _
+
+
+
+* Generics in Go
+
+
+
+* Generics terminology
+
+Whereas interfaces allow [[https://en.wikipedia.org/wiki/Polymorphism_(computer_science)][polymorphism]], generics allow [[https://en.wikipedia.org/wiki/Parametric_polymorphism][_parametric_polymorphism_]].
+
+Up until then, only some [[https://pkg.go.dev/builtin][builtin]] functions and types were sort of "generic".
+
+Now, you can declare functions and custom types in terms of _type_parameters_, which act as placeholders for types that will be provided later (_type_arguments_).
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/arts/ballet.svg 200 _
+
+The set of possible type arguments for a type parameter is specified via a _type_constraint_, which is represented by an interface type.
+
+
+
+* A generic function for retrieving the first element (if any) of a slice
+
+Let's revisit our earlier `first` function and make it generic:
+
+.code -edit src/firstgenericfunc.go /^//START1/,/^//END1/
+
+Note the pair of brackets between the `func` keyword and the regular list of parameters. It declares a type parameter named `T` subject to a type constraint named `any`.
+
+Note also the trick that consists in declaring an uninitialized variable of type `T` in order to obtain the latter's zero value.
+
+
+
+* A generic function for retrieving the first element (if any) of a slice
+
+`T` is constrained by `any`, which is a new builtin alias for `interface{}`. The type argument for `T` can be any type that satisfies the empty interface:
+
+.play -edit src/firstgenericfunc.go /^//START2/,/^//END2/
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/party/birthday.svg 200 _
+
+
+
+* Type inference
+
+Even better, the compiler can, [[https://go.dev/ref/spec#Type_inference][in some cases]], determine the type argument by itself, without the need for you to specify it explicitly:
+
+.play -edit src/firstgenericfuncinfer.go /^//START2/,/^//END2/
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/arts/ballet.svg 200 _
+
+
+
+* A generic set type
+
+Let's make our `Set` type generic:
+
+.code -edit src/mapgenericset.go /^//START1/,/^//END1/
+
+Note the `comparable` contraint. `comparable` is a new builtin interface that is satified by all types that support the `==` and `!=` operators.
+
+
+
+* A generic set type
+
+Our new generic type can be used to represents all kinds of sets, regardless of their element type (which must be comparable, though):
+
+.play -edit src/mapgenericset.go /^//START2/,/^//END2/
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/party/birthday.svg 200 _
+
+
+
+* Type constraints as a union of concrete types
+
+For operations provided by operators (e.g. `+`) rather than by methods, you can declare an interface as simply being satisfied by several concrete types:
+
+  type Plusser interface {
+    int | uint | string
+  }
+
+The tilde prefix operator enables more flexibility:
+
+  type Plusser interface {
+    ~int | ~uint | ~string
+  }
+
+For instance, `~int` denotes any type whose [[https://go.dev/ref/spec#Underlying_types][_underlying_type_]] is `int`.
+
+The [[https://pkg.go.dev/golang.org/x/exp/constraints][golang.org/x/exp/constraints package]] provides useful type sets, such as `Ordered`, which allows any type that supports the ordering operators (`<`, `<=`, `>`, and `>=`).
+
+
+
+* Type constraints as a union of concrete types (cont'd)
+
+An interface type that contains type constraints can be used only as a type constraint, not as a regular type:
+
+.play -edit src/plusservar.go /^//START/,/^//END/
+
+This limitation may be lifted in a future release of Go.
+
+
+
+* Limitations on generic methods: no stricter constraints
+
+A method cannot tighten the constraints on its receiver's type parameters:
+
+.play -edit src/plussermethod.go /^//START/,/^//END/
+
+
+
+* Limitations on generic methods: no stricter constraints (cont'd)
+
+However, you can declare `Sum` as a _function_ rather than as a _method_:
+
+.play -edit src/plusserfunc.go /^//START/,/^//END/
+
+
+
+* Limitations on generic methods: no more type parameters
+
+Methods cannot introduce type parameters not already present in their receiver:
+
+.play -edit src/mapmethod.go /^//START/,/^//END/
+
+
+
+* Limitations on generic methods: no more type parameters (cont'd)
+
+Again, you can declare `Map` as a function rather than as a method:
+
+.play -edit src/mapfunc.go /^//START/,/^//END/
+
+Whether you _should_ declare such a function is [[https://stackoverflow.com/questions/71624828/is-there-a-way-to-map-an-array-of-objects-in-golang/71624929#71624929][questionable]], though.
+
+
+
+* Two useful packages for reducing boilerplate
+
+The [[https://pkg.go.dev/golang.org/x/exp/slices][golang.org/x/exp/slices package]] provides various functions useful with slices of any type, such as one for sorting a slice:
+
+  func Sort[E constraints.Ordered](x []E)
+
+The [[https://pkg.go.dev/golang.org/x/exp/maps][golang.org/x/exp/maps package]] provides various functions useful with maps of any type, such as one that returns a slice containing the keys of a given map:
+
+  func Keys[M ~map[K]V, K comparable, V any](m M) []K
+
+Along with the golang.org/x/exp/constraints package, those two packages will likely be rolled in a future version.
+
+
+
+* Performance gains (?)
+
+
+
+* A crude experiment
+
+  type List struct {
+    // contains filtered or unexported fields
+  }
+
+I've taken the [[https://pkg.go.dev/container/list][`container/list` package]], generified its types and functions,
+
+
+  type List[E any] struct {
+    // contains filtered or unexported fields
+  }
+
+and run some benchmarks with `-count`20`. I then compared the results using `benchstat`. The code is available at [[https://github.com/jub0bs/genericlist][github.com/jub0bs/genericlist]].
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/mistake.svg 200 _
+
+
+
+* Execution time
+
+  name                       old time/op    new time/op    delta
+  List-8                        633ns ± 1%     637ns ± 2%   +0.70%  (p=0.000 n=17+18)
+  Extending-8                  1.70µs ± 1%    1.58µs ± 0%   -7.18%  (p=0.000 n=17+19)
+  Remove-8                      134ns ± 1%     141ns ± 2%   +5.29%  (p=0.000 n=20+19)
+  Issue4103-8                   308ns ± 1%     294ns ± 1%   -4.73%  (p=0.000 n=20+20)
+  Issue6349-8                   133ns ± 1%     138ns ± 1%   +3.48%  (p=0.000 n=19+17)
+  Move-8                        250ns ± 1%     246ns ± 1%   -1.65%  (p=0.000 n=19+19)
+  ZeroList-8                    355ns ± 0%     345ns ± 1%   -2.92%  (p=0.000 n=20+19)
+  InsertBeforeUnknownMark-8     174ns ± 1%     173ns ± 1%   -0.61%  (p=0.000 n=20+19)
+  InsertAfterUnknownMark-8      217ns ± 1%     206ns ± 1%   -4.82%  (p=0.000 n=20+18)
+  MoveUnknownMark-8             174ns ± 1%     167ns ± 1%   -4.19%  (p=0.000 n=18+19)
+
+Note that the generic version does not invariably run faster.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/witch-too-much-candy.svg 200 _
+
+
+
+* Allocations
+
+  name                       old alloc/op   new alloc/op   delta
+  List-8                         576B ± 0%      400B ± 0%  -30.56%  (p=0.000 n=20+20)
+  Extending-8                  1.63kB ± 0%    1.20kB ± 0%  -26.47%  (p=0.000 n=20+20)
+  Remove-8                       144B ± 0%      112B ± 0%  -22.22%  (p=0.000 n=20+20)
+  Issue4103-8                    336B ± 0%      256B ± 0%  -23.81%  (p=0.000 n=20+20)
+  Issue6349-8                    144B ± 0%      112B ± 0%  -22.22%  (p=0.000 n=20+20)
+  Move-8                         240B ± 0%      176B ± 0%  -26.67%  (p=0.000 n=20+20)
+  ZeroList-8                     384B ± 0%      320B ± 0%  -16.67%  (p=0.000 n=20+20)
+  InsertBeforeUnknownMark-8      192B ± 0%      144B ± 0%  -25.00%  (p=0.000 n=20+20)
+  InsertAfterUnknownMark-8       240B ± 0%      176B ± 0%  -26.67%  (p=0.000 n=20+20)
+  MoveUnknownMark-8              192B ± 0%      160B ± 0%  -16.67%  (p=0.000 n=20+20)
+
+However, the generic version does invariably cause fewer heap allocations.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-balloon.svg 200 _
+
+
+
+* Conclusion
+
+The advent of generics is promising:
+
+- more flexible and reusable functions and [[https://jub0bs.com/posts/2020-07-21-go-bimap][data structures]]
+- more efficient code at run time
+- more type safety
+- fewer reasons to resort to reflection or code generation
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/liberty.svg 200 _
+
+
+
+* Resources about generics
+
+- [[https://go.dev/ref/spec#Type_parameter_declarations][Type parameter declarations (language spec)]]
+- [[https://jub0bs.com/posts/2020-07-21-go-bimap/][jub0bs - A glimpse at parametric polymorphism in Go: designing a generic bidirectional map (2020)]]
+- [[https://www.youtube.com/watch?v=Pa_e9EeCdy8][Robert Griesemer & Ian Lance Taylor - Generics! (GopherCon 2021)]]
+- [[https://www.youtube.com/watch?v=nr8EpUO9jhw][Ian Lance Taylor - Using Generics in Go (Go Day 2021 on Google Open Source Live)]]
+- [[https://go.dev/doc/tutorial/generics][Tutorial: Getting started with generics (2022)]]
+- [[https://www.youtube.com/watch?v=eU-w2psAvdA][Roger Peppe - Generics Unconstrained (GopherCon UK 2022)]]
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/witch-learning.svg 200 _
