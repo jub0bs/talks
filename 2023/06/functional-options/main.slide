@@ -1,0 +1,1044 @@
+Useful functional-options tricks for better libraries
+29 Jun 2023
+GopherCon EU 2023 (Berlin)
+
+Julien Cretel
+https://jub0bs.com
+@jub0bs
+
+
+: Library design matters!
+: A good library will delight its users; a bad one may reduce them to tears.
+: In this talk, I'll discuss a powerful Go pattern known as functional options
+: as well as tips & tricks the unleash full power of the pattern on your libraries.
+
+
+
+* Functional options in a nutshell
+
+Like the traditional builder pattern, functional options is a *creational*design*pattern*:
+its purpose is to ease the instantiation of an object, which I'll refer to as the *product*.
+
+The pattern was first described by Rob Pike and later popularized by Dave Cheney.
+
+The pattern remains controversial in the Go community:
+
+- some Gophers love it 😍
+- others hate it with a passion 🤬
+
+As a motivating example, I've chosen a much maligned topic in Web development... 
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/dandy/umbrella.svg 200 _
+
+
+: one of those design patterns (like builder) that help you create some object
+: - which I'll call the product
+: Rob pike came up with it a while ago
+: praise and scorn
+: transition
+: - So I needed a motivating example for this talk
+: - toy examples can be misleading
+: - and I've chosen a topic that I'm sure all of you absolutely love, namely... CORS
+
+
+
+* A motivating example: Cross-Origin Resource Sharing (CORS)
+
+.image img/cors2.png 350 _
+
+: CORS!
+: squirm in your seats, recoil in disgust
+
+
+
+* A motivating example: Cross-Origin Resource Sharing (CORS)
+
+Few protocols have caused Web developers as much [[https://stackoverflow.com/questions/tagged/cors][pain and frustration]] as CORS... 😬
+
+.image img/cors_hate.jpg 500 _
+
+: honestly can't think of a topic that has caused more weeping and gnashing of teeth
+: this is just a sample from Twitter
+: I've left out the tweets containing expletives
+: oh hold on! one actually snuck in there... oh well, 3 out of 4
+
+
+
+* A motivating example: Cross-Origin Resource Sharing (CORS)
+
+But this presents an opportunity for the functional-options pattern to prove its worth!
+
+If we could use it to make CORS just easier to work with, we should count that as a win.
+
+In the remainder of this talk, I'll refer to you as the designers of a *fictional*CORS*middleware* library named `fcors`.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/superhero/gotham.svg 200 _
+
+: CORS synonymous with dread
+: but great test for funcopts
+: - if functional options can rise up to the challenge
+: - and contribute to make CORS a little easier
+: - I'd count that as a win for the pattern
+: in the remainder of this talk
+: - you, members of the audience
+: I think you can guess what the leading f in the package name stands for :)
+
+
+
+* CORS 101
+
+Browsers, according to the Same-Origin Policy (SOP), enforce restrictions on cross-origin network access. For instance, browsers won't (by default) let a script read the response.
+
+.image img/cors101_before.svg 400 _
+: https://excalidraw.com/#json=pBBDsFfmAZXsveNUKVvY0,NV_5lARTxk_hsLfZmAWayw
+
+: if you know nothing about CORS, no worries
+: this is all you really need to know to be able to follow
+: ...
+: big red error message in your browser's console
+
+
+
+* CORS 101
+
+This is where CORS comes in: the server can configure CORS to instruct browsers to selectively lift some of the SOP's restrictions for select clients.
+
+.image img/cors101_after.svg 400 _
+: https://excalidraw.com/#json=ObrMQ5EyRSykFIUSHzMLb,VQi78bdUmQWG7-bhLlSEpw
+
+: instruct browser to selectively lift these restrictions for select clients
+
+
+
+* Vanilla approach: positional parameters
+
+Your users will need some *factory*function* to instantiate your CORS middleware.
+
+The simplest approach consists in a factory function with *positional*parameters*:
+
+  func NewCORS(origins []string, maxAgeInSeconds uint, requestHeaders []string) *Middleware
+
+Here's an example of a call site:
+
+  fcors.NewCORS([]string{"https://example.com"}, 0, nil)
+
+➕ familiar
+➖ not ergonomic
+➖ insufficiently expressive
+➖ not extensible
+
+: not ergonomic
+: - call sites are hard to read and write
+: insufficiently expressive
+: - more on that in a minute
+: not extensible:
+: - would require a major-version bump, which (as Bjorn reminded us yesterday) should be avoided if possible
+
+
+
+* Popular alternative: config struct
+
+A popular alternative is to bundle up all parameters into a configuration struct:
+
+  type Config struct {
+    Origins []string
+    MaxAgeInSeconds uint
+    RequestHeaders []string
+  }
+
+  func NewCORS(cfg Config) *Middleware
+
+Here's an example of a call site:
+
+  fcors.NewCORS(fcors.Config{
+    Origins: []string{"https://example.com"},
+    RequestHeaders: []string{"Authorization"},
+  })
+
+➕ extensible
+➖ visually distracting call sites
+➖ [[https://twitter.com/jub0bs/status/1582296106246885378][insufficiently expressive]]
+
+: extensible: free to provide more options later
+: visually distracting: esp. slice literals
+: insufficiently expressive
+: - ambiguity when zero value is a legitimate value but does not coincide with the desired default behaviour
+: CORS provides a great example of this
+: - there is this CORS response header, ACMA, integer value
+: - setting this header with a value of zero does not have the same effect as simply omitting the header
+: - most CORS libraries I've reviewed ignore this distinction
+
+
+
+
+* Better alternative: functional options
+
+Functional options can dramatically improve things:
+
+  func NewCORS(opts ...Option) *Middleware
+
+  func FromOrigins(origins ...string) Option
+  func MaxAgeInSeconds(delta uint) Option
+  func WithRequestHeaders(names ...string) Option
+
+Here's an example of a call site:
+
+  fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),
+    fcors.WithRequestHeaders("Authorization"),
+  )
+
+➕ declarative
+➕ extensible
+➕ expressive
+➖ unfamiliar
+
+: factory function takes a variadic parameter of some Option type
+: and package also provides _functions_ that return the various options
+: hence the name "functional options"
+: differences are more than cosmetic!
+: declarative:
+: - forgive repeated mention of the pkg name in qualified identifiers...
+: - call sites almost read like an embedded DSL
+: extensible: can freely provide more options later
+: expressive: no problem related to zero values
+: unfamiliar to some people
+: - only misgiving
+: - function calls as arguments
+: - too clever?
+
+
+
+* 10 tips & tricks for functional options
+
+: now that you have had a glimpse of the pattern
+: here are a few tips for implementing it
+
+
+
+* 1. Resort to functional options judiciously
+
+* Resort to functional options judiciously
+
+You may be tempted to systematically apply the functional-options pattern as a way to emulate keyword arguments (as found in Python and Ruby).
+
+However, functional options tend to be *more*expensive* than a simple config struct.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/king.svg 200 _
+
+❌ Don't use the pattern on the hot path of your program, esp. if performance is critical.
+
+✅ Consider the pattern for one-off initialization of objects whose behavior is complex.
+
+: let me start with a warning
+: - this talk is not a license to use functional options indiscriminately
+: - a pattern is always contextual, never absolute
+: languages like Python have optional function parameters; Go doesn't
+: - may be tempted to use funcopts as golden hammer to emulate keyword arguments
+: expensive: slower and more memory-hungry
+: but, IMO, the pattern really shines for something like a HTTP middleware
+
+
+
+* 2. Design factory functions as fallible
+
+* The infallibility trap
+
+The factory function below returns a pointer to a middleware and no `error`:
+
+  func NewCORS(options ...Option) *Middleware
+
+But what should happen if some options specified by your users don't make sense?
+
+  cors := fcors.NewCORS(
+    fcors.FromOrigins(
+      "example.com",           // invalid Web origin: lacks "https://"
+      "https://gophercon.eu/", // invalid Web origin: contains a path
+    ),
+  )
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/crash-dummy.svg 150 _
+
+: do you notice anything amiss already?
+: the signature of this factory function indicates that it cannot fail
+: what if your users do something wrong?
+: what if, for example, they specify invalid values for the Web origins they wish to allow?
+
+
+
+* Escaping the infallibility trap (1/2)
+
+  func NewCORS(options ...Option) *Middleware
+
+What should your factory function do in such cases?
+
+*😱*Panic?*
+
+No. Good Go libraries, once initialised, don't panic for anticipated failure cases.
+
+*🤔*Return*nil?*
+
+No, because users would get no explanation about the cause(s) of the failure.
+
+*🤬*Silently*return*a*dysfunctional*product?*
+
+No. This approach violates the fail-fast principle and complicates troubleshooting. Unfortunately, it is distressingly common in implementations of functional options.
+
+: panic? not what well-behaved Go libraries do
+: nil? provide insufficient context as to what went wrong
+: unfortio, most CORS libraries choose to return a dysfunctional middleware.
+: - users find out much later that nothing works as expected
+: - explains what CORS is frustrating
+
+
+
+* Escaping the infallibility trap (2/2)
+
+The remedy is straightforward: make the factory function's fallibility explicit
+by returning a result of type `error` in addition to the product:
+
+  func NewCORS(options ...Option) (*Middleware, error)
+
+That way, you can alert your users about their configuration mistakes:
+
+  cors, err := fcors.NewCORS(       // ❌ non-nil error: invalid Web origin: lacks "https://"
+    fcors.FromOrigins(
+      "example.com",                // invalid Web origin: lacks "https://"
+      "https://gophercon.eu/talks", // invalid Web origin: contains a path
+    ),
+  )
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/sage.svg 150 _
+
+: Go has a simple solution: when a function can fail, it typically returns an error result
+: rather than sweeping issues under the rug, tell your users what they're doing wrong
+: you can actually do better, here
+: - error message is only reporting the first issue, but there is a second one
+
+
+
+* Spare your users from a frustrating game of Whac-a-Gopher
+
+If your factory function reports only the first configuration issue it has encountered,
+you effectively force your users to fix issues one at a time.
+
+.image img/whac-a-gopher.jpg 400 _
+
+Instead, collect all issues and return them as a *multi-error* (new in Go 1.20).
+
+
+
+* 3. Guarantee insensitivity to option order
+
+* When order doesn't matter, users are happier
+
+With a classic config struct, users are free to populate the struct's fields in whatever order they please. That order doesn't affect the behavior of the product.
+
+With functional options, the order may affect the behavior of the product. Not great...
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-balloon.svg 200 _
+
+Good libraries respect the [[https://en.wikipedia.org/wiki/Principle_of_least_astonishment][the principle of least astonishment]].
+
+Accordingly, ensure that the behavior of the product be insensitive to option order.
+
+: with the config-struct approach, the order of the fields in keyed struct literals doesn't matter
+: but with functops, the order in which options are called may affect the behavior of the product
+: - surprising & annoying
+: be kind to your users: make the product insensitive to option order
+
+
+
+* 4. Elucidate the effects of multiple calls of the same functional option
+
+* Multiple calls to the same option
+
+What happens when a call to the factory function uses the same functional option multiple times, possibly even with conflicting arguments?
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),
+    fcors.FromOrigins("https://gophercon.eu"),
+  )
+
+The answer isn't immediately obvious to users.
+
+In fact, this source of confusion is often leveled against the functional-options pattern.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/mistake.svg 200 _
+
+: this is another thing that differs from the classic config-struct approach
+: with funcopts, multiple calls to the same functional option are syntactically allowed
+: but the effects of those multiple calls may not be clear to your users
+
+
+* Two questionable solutions: making the first/last call prevail
+
+You could design the factory function to make the first option call prevail,
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),  // ✅
+    fcors.FromOrigins("https://gophercon.eu"), // ❌
+  )
+
+or to make the last option call prevail,
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),  // ❌
+    fcors.FromOrigins("https://gophercon.eu"), // ✅
+  )
+
+but doing so would conflict with the *Guarantee*insensitivity*to*option*order* principle.
+
+: here are two ideas
+: if people call the same option multiple times, you could perhaps
+: but notice that the order in which your users specify their options would matter...
+: let's look at other ideas
+
+
+
+* Two acceptable solutions: additivity or failure
+
+You may be able to design the factory function so that calls be somehow additive:
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),  // ✅
+    fcors.FromOrigins("https://gophercon.eu"), // ✅
+  )
+  if err != nil {
+    // handle error
+  }
+  // cors allows both origins https://example.com and https://gophercon.eu
+
+Alternatively, you can simply error out if the same option is called multiple times:
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),
+    fcors.FromOrigins("https://gophercon.eu"),
+  )
+  if err != nil { // ❌ non-nil error
+    // handle error
+  }
+
+: depending on the problem space
+: or you could take the easy way out
+
+
+
+* Additivity or failure? Dispel any ambiguity in the documentation.
+
+Whether you choose additivity or failure, document your design decision:
+
+.code src/document_additivity_or_failure.go
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/witch-learning.svg 200 _
+
+: whatever you choose, clarify the option's behavior in its documentation
+
+
+
+* 5. Strive for immutability
+
+* The value of immutability
+
+One motivation for creational design patterns is effective *immutability* of the product.
+
+As often, constraints liberate: immutability implies *concurrency*safety*.
+
+In particular, concurrency safety is desirable for a HTTP middleware because it will typically be invoked concurrently from multiple goroutines.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/sage.svg 200 _
+
+: motivation for creational design patterns (funcopts, builer) => immutability
+: immutability often is a valuable property
+: - cameron touched upon that in the context of dependency management yesterday
+: here, immutability => concurrency safety
+: and you typically want HTTP middleware to be concurrency-safe
+
+
+
+* Make the product effectively immutable
+
+Accordingly, the product should ideally be effectively immutable.
+
+In our CORS example, if users retained a reference to a slice of allowed origins and updated that slice afterwards, the middleware's behavior should remain unchanged:
+
+.code src/immutability.go
+
+Use [[https://en.wikipedia.org/wiki/Defensive_programming][defensive copying]] if you have to.
+
+: make the product effectively immutable
+: your users should not be able to change the behavior of the product once they've built it
+: I don't care how you do it...
+
+
+
+* 6. Declare a custom Option type
+
+* Anonymous vs. named option type
+
+Your factory function could take a variadic argument of some unnamed function type:
+
+  func NewCORS(options ...func(*config) error) (*Middleware, error)
+
+However, a more judicious design choice is to _reify_ your functional options
+by declaring an exported `Option` type for them:
+
+  func NewCORS(options ...Option) (*Middleware, error)
+
+  // omitted declaration of the Option type
+
+Benefits include *signature*readability* and *option*discoverability*.
+
+: you could simply rely on some unnamed function type for your options
+: but beneficial to declare a custom Option type, for several reasons
+
+
+
+* Function-signature readability
+
+With a custom `Option` type, your functions' signatures become easier to read. Compare
+
+  func NewCORS(options ...func(*config) error) (*Middleware, error)
+  func FromOrigins(origins ...string) func (*config) error
+
+to
+
+  // omitted declaration of the Option type
+
+  func NewCORS(options ...Option) (*Middleware, error)
+  func FromOrigins(origins ...string) Option
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-hug.svg 150 _
+
+: with a custom Option type, function signatures are simply easier to read
+: which version, top or bottom, do you prefer?
+
+
+
+* Common objection: namespace pollution
+
+Each functional option yields an exported identifier, which some people perceive as *namespace*pollution*. But the package's documentation is arguably better for it! 🤓
+
+  package fcors
+  func FromOrigins(origins ...string) Option
+  func MaxAgeInSeconds(delta uint) Option
+  func WithRequestHeaders(names ...string) Option
+
+With the config-struct approach, [[https://pkg.go.dev/github.com/rs/cors#Options][per-field doc comments don't stand out as much]]:
+
+.image img/rs_cors_options.png 300 _
+
+: some people find that functops results in a busy package with too many exported identifiers
+: I think that's actually a strength of the pattern
+: in general, you DO want options to stand out in the documentation
+
+
+
+* Common objection: lack of discoverability
+Detractors also argue that the various functional options get lost among other package-level functions; a valid concern most acutely felt in large packages.
+
+.image img/untidy_doc.png 400 _
+
+: that said, funcopts can be difficult to find among other top-level functions in the doc
+: again, a custom Option type helps
+
+
+
+* A custom Option type promotes option discoverability
+
+However, simply declare a custom `Option` type and all the functional options get neatly listed under its declaration in the documentation:
+
+.image img/tidy_doc.png 400 _
+
+: if you declare a custom Option type...
+: the various options all get neatly listed under that type in the documentation
+
+
+
+* 7. Options should operate on an intermediate, non-exported struct type
+
+
+
+* Downside of operating on the product directly
+
+In Rob Pike's original approach, each functional option
+
+- has a parameter of the same type as the product, and
+- returns its inverse.
+
+  type Option func(*Middleware) Option
+
+
+However, the main benefit of this approach is also its main downside: users can change the behavior of the product after initialization!
+
+  cors, err := fcors.NewCORS(
+    fcors.FromOrigins("https://example.com"),
+  )
+  // omitted error handling
+
+  fcors.FromOrigins("https://gophercon.eu")(cors) // 😱 updates the origin allowed by cors!
+
+This approach violates the *Strive*for*immutability* principle.
+
+: in Rob Pike's original post, funcopts operate directly on the product
+: - I appreciate the intent: making options easily reversible
+: but this approach actually is an obstacle to immutability...
+: - because it allows users to modify the behavior of the product after the fact
+: - not a big fan of this approach
+
+
+
+* A better approach
+
+Instead, make functional options operate on an intermediate struct type:
+
+  type Option func(*config) error
+
+  type config struct {
+    origins []string
+    maxAgeInSeconds uint
+    customMaxAge bool
+    // -snip-
+  }
+
+  func (cfg *config) middleware() *Middleware
+
+And contrary to the config-struct approach, there is no need to export this struct type!
+
+.image img/ousterhout.svg 200 _
+
+: https://excalidraw.com/#json=UabBGdobxq3Li-JCY6kH8,GrNde1CgU0JhzUn7QELLow
+
+: funcopts should operate on some intermediate struct
+: if you squint, you may think we've gone full circle: config struct
+: - but notice this: no need to export the config type this time
+: keep the surface area of your API as small as it can be
+: as John Ousterhout puts it: deep libraries are better than shallow ones
+
+
+
+* Three benefits of an intermediate struct type
+
+Because it's non-exported, this intermediate struct type can freely evolve over time,
+perhaps in order to improve performance.
+
+This approach promotes immutability and lets you to validate options once and for all:
+
+  func NewCORS(opts ...Option) (*Middleware, error) {
+    var cfg config
+    for _, opt :=  range opts {
+      if err := opt(&cfg); err != nil {
+        return nil, err
+      }
+    }
+    // omitted: check for mutually incompatible options
+    return cfg.middleware(), nil
+  }
+
+Moreover, it allows you to choose a type other than a struct for the product:
+
+  type Middleware func(http.Handler) http.Handler
+
+  func NewCORS(opts ...Option) (Middleware, error)
+
+: 1. not exported => type can freely evolve over time
+: 2. this approach promotes immutability
+: ... and allows you to validate options once and for all
+: and 3. the product can be something other than a struct
+
+
+
+* 8. Declare Option as an opaque interface type
+
+: we can finally talk about what your Option type should be
+
+
+
+* Option should be, not a function type, but an opaque interface
+
+`Option` could simply be based on some function type:
+
+  type Option func(*config) error
+
+But a better choice is an _opaque_interface_ (i.e. an interface that exports no method):
+
+  type Option interface {
+    apply(*config) error
+  }
+
+Opaque interface types may have detractors, but they are frequently useful.
+
+: your Option type could simply be based on some function type
+: but an opaque interface is better
+: opaque == exports no method
+: some people frown upon opaque interfaces
+: - see interfaces as things that beg to be implemented
+: - but useful
+: - I think Jonathan Amsterdam would agree
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/superhero/gotham.svg 200 _
+
+
+
+* Two benefits of an opaque interface
+
+An opaque interface hides the non-exported `config` struct type from your users' sight in the documentation. Compare
+
+  type Option func(*config) error
+
+to
+
+  type Option interface {
+    // contains filtered or unexported methods
+  }
+
+An opaque interface also clarifies that users are not meant to extend the set of options.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-hug.svg 150 _
+
+: 1. with an opaque interface, no mentions of the non-exported config struct type
+: 2. clarifies that the set of options is closed, not meant to be extended by your users
+
+
+
+* Avoid an explosion of struct types
+
+Now that you have an interface, what concrete type(s) should you use to implement it?
+
+[[https://github.com/uber-go/guide/blob/master/style.md#functional-options][Some people]] insist that each functional option should be implemented as a distinct (non-exported) struct type.
+
+  type maxAgeOption struct {
+    maxAgeInSeconds uint
+  }
+
+  func (o *maxAgeOption) apply(cfg *config) error {
+    // omitted validation logic
+    cfg.maxAgeInSeconds = o.maxAgeInSeconds
+    cfg.customMaxAge = true
+    return nil
+  }
+
+  func MaxAgeInSeconds(delta uint) Option {
+    return &maxAgeOption{maxAge: delta}
+  }
+
+However, the alleged testability benefits don't justify the amount of boilerplate required.
+
+: Uber's Go style guide: one struct type per option
+: - one struct
+: - its apply method to satisfy the option
+: - one function that returns the option in question
+: the rationale for using a struct type is that a struct can be comparable
+: - functions are never comparable
+: - and comparability is perceived as desirable for testing purposes
+: but the benefits are moot and result in too much boilerplate for my taste
+
+* A better approach: use a function adapter
+
+Instead, simply rely on a *function*adapter* (reminiscent of `http.HandlerFunc`):
+
+  type option func(*config) error
+
+  func (o option) apply(cfg *config) error {
+    return o(cfg)
+  }
+
+Implementing the various functional options requires comparatively less boilerplate:
+
+  func MaxAgeInSeconds(delta uint) Option {
+    f := func(cfg *config) error {
+      // omitted validation logic
+      cfg.maxAge = delta
+      cfg.customMaxAge = true
+      return nil
+    }
+    return option(f)
+  }
+
+: IMO, a simple function adapter is all you need
+: results in way boilerplate
+: if you don't know, check out http.HandlerFunc in stdlib and how it relates to http.Handler
+
+
+
+* 9. Consider enforcing constraints at compile time thanks to multiple Option types
+
+
+* Motivation: preventing dangerous CORS misconfigurations
+
+Good libraries are not only easy to use but also *hard*to*misuse*.
+
+.image https://jub0bs.com/images/bent-barrel.svg 300 _
+
+: Unfortunately, many libraries are easy to misuse.
+
+This is especially important for security-critical libraries, such as a CORS middleware.
+
+For instance, a CORS middleware should not allow credentialed access (e.g. with cookies) from arbitrary origins with credentials, because that would [[https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties][expose people to cross-origin attacks]].
+
+: Joshua Bloch (of Java fame) often says that...
+: remember that CORS relaxes security
+: - contrary to what you may have heard...
+: - activating CORS does not increase security
+: in fact, a CORS middleware that would allow credentialed access from anywhere would expose...
+: transition: What can you do to forbid the creation of such a dangerous middleware?
+
+
+
+* Preventing some CORS misconfiguration at run time?
+
+One possible approach simply consists in raising an error at run time:
+
+  cors, err := fcors.NewCORS( // ❌ non-nil error
+    fcors.FromAnyOrigin(),
+    fcors.WithCredentials(),
+  )
+
+But CORS [[https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#credentialed_requests_and_wildcards][differs significantly in the way it handles anonymous vs. credentialed access]],
+so much so that reflecting this divide in your CORS library can be beneficial...
+
+.image img/fork_path.jpg 250 _
+
+: fail at run time by simply returning an error
+: that would work
+: but the CORS protocol is quite different in how it handles anonymous vs. credentialed access
+: emphasize that in the library
+
+
+
+* Preventing some CORS misconfigurations at compile time (1/3)
+
+With some type trickery, you can render some misconfigurations impossible to compile!
+
+First, split your original factory function into two distinct ones:
+
+.image img/split_newcors.svg 250 _
+: https://excalidraw.com/#json=lFuf4KSC0YxOr0i4SqNpL,8ypCEHkMIOoA0Cs4dKsXpA
+
+Note that two factory functions differ in the type of their variadic parameter.
+
+
+
+* Preventing some CORS misconfigurations at compile time (2/3)
+
+Then, accordingly segregate your functional options between three distinct types:
+
+.image img/split_option.svg 500 _
+: https://excalidraw.com/#json=jh0qKDGIFy5Uk2OlqaGnJ,jNhCe9sWO6ROk5LVZBCDEw
+
+: finally, split your original Option type into three
+: one only compatible with anonymous access, one only compatible with...
+: ... and one compatible with both anonymous and credentialed access
+
+
+
+* Preventing some CORS misconfigurations at compile time (3/3)
+
+That way, allowing anonymous access from arbitrary origins remains possible,
+but allowing credentialed access from arbitrary origins becomes [[https://go.dev/play/p/CIfJXJbWk5j][impossible]]!
+
+  fcors.AllowAccessWithCredentials(
+    fcors.FromAnyOrigin(), // ❌ compile-time error
+  )
+
+Compilation fails with an error message of this kind:
+
+  cannot use fcors.FromAnyOrigin() (value of type OptionAnon) as OptionCred value
+  in argument to fcors.AllowAccessWithCredentials: OptionAnon does not implement OptionCred
+  (missing method applyCred)
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/knight.svg 200 _
+
+: now, this kind of dangerous CORS misconfiguration won't even compile
+: users who try will get a compilation error
+
+
+
+* Gotcha: use different concrete types
+
+Make sure that one option subtype cannot be type-asserted or converted to the other!
+
+In particular, do not use the same function adapter to implement both option subtypes:
+
+  type option func(*config) error
+
+  func (o option) applyAnon(cfg *config) error {
+    return o(cfg)
+  }
+
+  func (o option) applyCred(cfg *config) error {
+    return o(cfg)
+  }
+
+Otherwise, your users could easily bypass your intended compile-time constraints:
+
+  fcors.AllowAccessWithCredentials(
+    fcors.OptionCred(fcors.FromAnyOrigin()), // 😱 no compilation error!
+  )
+
+: just be careful: don't use the same concrete type to implement orthogonal option types
+: otherwise, your users will be able to bypass your intended compile-time constraints
+: - via a conversion or a type assertion
+
+
+
+* 10. Consider splitting your options into multiple namespaces
+
+: might skip over this because running out of time
+
+
+
+* Why split options into multiple namespaces?
+
+You may not want to bundle the many options of your library in a single package.
+
+For example, your CORS library could provide the *more*advanced*or*dangerous*options* via a subpackage, perhaps one named "risky".
+
+An import of it would stand out almost as much as an import of the `unsafe` package
+in client code and would send a strong signal to reviewers: careful, here be dragons!
+
+  import "unsafe"                        // 😱
+
+  import "github.com/jub0bs/fcors/risky" // 🤔
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/gas-mask.svg 200 _
+
+: why split options?
+: your package may provide many different options
+: some options may be more advanced or dangerous than others
+: you may want to put such options in a pkg named "risky" or something like that
+: import of that pkg == strong signal
+
+
+
+* How to split options into multiple packages (1/2)
+
+Because your option types are opaque interfaces, you need to keep them in the same package as their implementations. Easy: move everything to a new [[https://go.dev/doc/go1.4#internalpackages][internal package]].
+
+Then, in your root package, export [[https://go.dev/blog/go1.9][type aliases]] for your option types and pass-through functions for your most basic options.
+
+  package fcors
+
+  type (
+    OptionAnon = internal.OptionAnon
+    OptionCred = internal.OptionCred
+    Option     = internal.Option
+  )
+
+  func AllowAccess(options ...Option) (Middleware, error) {
+    return internal.AllowAccess(options...)
+  }
+
+  func FromOrigins(origins ...string) Option {
+    return internal.FromOrigins(origins...)
+  }
+  // -snip-
+
+: snag: Go won't let you implement an opaque interface that's declared in a different package
+: but no biggie: move to a new internal package
+: both Bjorn and Jonathan praised internal packages yesterday
+: - use them liberally; they're great
+: then, in the original pkg, just declare type aliases & funcs for stuff that should be accessible to your users
+
+
+* How to split options into multiple packages (2/2)
+
+Finally, in your `risky` package, export pass-through functions for the remaining options.
+
+  package risky
+
+  // omitted imports
+
+  func LocalNetworkAccess() fcors.Option {
+    return internal.LocalNetworkAccess()
+  }
+
+  func TolerateInsecureOrigins() fcors.Option {
+    return internal.TolerateInsecureOrigins()
+  }
+
+  func SkipPublicSuffixCheck() fcors.Option {
+    return internal.SkipPublicSuffixCheck()
+  }
+  // -snip-
+
+
+: put the other more advanced options in your new risky package
+
+
+
+* Takeaways
+
+- Library design matters.
+- Functional options can improve the user experience of your libraries.
+- Don't stop at the original pattern: a few adjustments can go a long way.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/arts/ballet.svg 300 _
+
+: library design matters
+: funcopts is a powerful design pattern that can make libraries
+: you can further riff on the pattern if needed
+: ... and one more thing!
+
+
+
+* One more thing: fcors actually exists
+
+Are you looking for a dependable *CORS*middleware*library*? Check out [[https://github.com/jub0bs/fcors][jub0bs/fcors]] 😇
+
+.image img/fcors.png 100 _
+
+.image img/bit.ly_jub0bs-fcors.png 350 _
+
+: it's got the love you need to see you through
+: I used all the tricks discussed in this talk and more
+: - reference for this talk
+
+
+
+* Additional resources (1/2)
+
+*Blog*posts*
+
+- [[https://commandcenter.blogspot.com/2014/01/self-referential-functions-and-design.html][Rob Pike - Self-referential functions and the design of options (2014)]]
+- [[https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis][Dave Cheney - Functional options for friendly APIs (2014)]]
+- [[https://www.calhoun.io/using-functional-options-instead-of-method-chaining-in-go/][Jon Calhoun - Using functional options instead of method chaining in Go (2018)]]
+- [[https://go.dev/blog/module-compatibility][Go Blog - Keeping your modules compatible (2020)]]
+- [[https://www.evanjones.ca/go-functional-options-slow.html][Evan Jones - Functional options are slow (2022)]]
+- [[https://uptrace.dev/blog/golang-functional-options.html][Vladimir Mihailenco - Golang Functional Options are named args on steroids (2023)]]
+- [[https://jub0bs.com/posts/2023-02-08-fearless-cors/][jub0bs - Fearless CORS: a design philosophy for CORS middleware libraries (and a Go implementation) (2023)]]
+
+*Documentation*
+
+- [[https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS][MDN Web Docs - CORS]]
+
+: various resources if you're interested
+
+
+
+* Additional resources (2/2)
+
+*Book*
+
+- [[https://web.stanford.edu/~ouster/cgi-bin/book.php][John Ousterhout - A philosophy of software design (2018)]]
+
+*Talks*
+
+- [[https://www.youtube.com/watch?v=heh4OeB9A-c][Joshua Bloch - How to design a good API and why it matters (Google TechTalks 2007)]]
+- [[https://www.youtube.com/watch?v=24lFtGHWxAQ][Dave Cheney - Functional options for friendly APIs (dotGo 2014)]]
+- [[https://www.youtube.com/watch?v=5buaPyJ0XeQ][Dave Cheney - Do not fear first class functions (dotGo 2016)]]
+- [[https://www.youtube.com/watch?v=IcgmSRJHu_8][Richard Feldman - Making impossible states impossible (elm-conf 2016)]]
+- [[https://www.youtube.com/watch?v=JhdL5AkH-AQ][Jonathan Amsterdam - Detecting incompatible API changes (GopherCon 2019)]]
+
+*Gophers*
+
+- [[https://github.com/egonelbre/gophers][Egon Elbre - Gophers]] (original design by [[https://www.instagram.com/reneefrench/][Renée French]])
+
+
+* Link to these slides
+
+[[https://github.com/jub0bs/talks/tree/main/2023/06/functional-options][https://github.com/jub0bs/talks/tree/main/2023/06/functional-options]]
+
+.image img/bit.ly_funcopts-gopherconeu2023.png 400 _
+
+: planning to write a blog post that will expand upon ideas from this talk
