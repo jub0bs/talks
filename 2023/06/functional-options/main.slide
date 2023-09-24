@@ -622,7 +622,7 @@ And contrary to the config-struct approach, there is no need to export this stru
 Because it's non-exported, this intermediate struct type can freely evolve over time,
 perhaps in order to improve performance.
 
-This approach promotes immutability and lets you to validate options once and for all:
+This approach promotes immutability and lets you validate options once and for all:
 
   func NewCORS(opts ...Option) (*Middleware, error) {
     var cfg config
@@ -873,7 +873,7 @@ In particular, do not use the same function adapter to implement both option sub
 Otherwise, your users could easily bypass your intended compile-time constraints:
 
   fcors.AllowAccessWithCredentials(
-    fcors.OptionCred(fcors.FromAnyOrigin()), // 😱 no compilation error!
+    fcors.FromAnyOrigin().(fcors.OptionCred), // 😱 no compilation error
   )
 
 : just be careful: don't use the same concrete type to implement orthogonal option types
