@@ -1,0 +1,406 @@
+Récit d'une optimisation de performance lucrative 💸
+25 Jun 2024
+Golang Paris meetup
+
+Julien Cretel (a.k.a. jub0bs)
+
+https://jub0bs.com
+https://bsky.app/profile/jub0bs.com
+https://infosec.exchange/@jub0bs
+
+
+
+* Cahier des charges (simplifié)
+
+  // A Bouncer has the knowledge of a list of guests to some recurring dinner party.
+  type Bouncer struct
+
+  // NewBouncer returns a new Bouncer whose guest names correspond to lowercased elements of guests.
+  func NewBouncer(guests ...string) *Bouncer
+
+  // Check verifies whether csv is a sorted list of comma-separated, lowercase, and unique guests;
+  // if so, it returns a csv of all those candidates and true;
+  // otherwise, it returns the empty string and false.
+  func (b Bouncer) Check(csv string) (string, bool)
+
+Remarque : `Check` est censée être appelée bien plus de fois que `NewBouncer`.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/party/birthday.svg 200 _
+
+
+
+* Version initiale (1/2)
+
+  type Bouncer struct {
+    guests []string
+  }
+
+  func NewBouncer(guests ...string) *Bouncer {
+    normalized := make([]string, 0, len(guests))
+    for _, guest := range guests {
+      normalized = append(normalized, strings.ToLower(guest))
+    }
+    return &Bouncer{guests: normalized}
+  }
+
+
+
+* Version initiale (2/2)
+
+  func (b Bouncer) Check(csv string) (string, bool) {
+    if csv == "" {
+      return "", true
+    }
+    candidates := strings.Split(csv, ",")
+    var accepted []string
+    for _, candidate := range candidates {
+      var ok bool
+      for _, guest := range b.guests {
+        normalized := strings.ToLower(guest)
+        if candidate == normalized {
+          accepted = append(accepted, normalized)
+          ok = true
+          break
+        }
+      }
+      if !ok {
+        return "", false
+      }
+    }
+    return strings.Join(accepted, ","), true
+  }
+
+: https://go.dev/play/p/n9jBAILDkwE
+
+
+
+* Piste d'amélioration : complexité inutilement quadratique
+
+`Check` fait intervenir deux boucles imbriquées :
+
+- une controlée par le nombre de candidats (n), et
+- une autre contrôlée par le nombre d'invités (m).
+
+La complexité dans le pire des cas est Θ(m * n).
+
+
+
+* Stockage des invités dans un ensemble plutôt qu'une slice (1/3)
+
+Créons une petite abstraction pour promouvoir la lisibilité :
+
+  type Set map[string]struct{}
+
+  func NewSet() Set {
+    return make(Set)
+  }
+
+  func (s Set) Add(elem string) {
+    s[elem] = struct{}{}
+  }
+
+  func (s Set) Contains(elem string) bool {
+    _, found := s[elem]
+    return found
+  }
+
+: https://go.dev/play/p/o1neiMBtKKb
+
+
+* Stockage des invités dans un ensemble plutôt qu'une slice (2/3)
+
+  type Bouncer struct {
+    guests Set
+  }
+
+  func NewBouncer(guests ...string) *Bouncer {
+    set := NewSet()
+    for _, guest := range guests {
+      set.Add(strings.ToLower(guest))
+    }
+    return &Bouncer{guests: set}
+  }
+
+
+
+* Stockage des invités dans un ensemble plutôt qu'une slice (3/3)
+
+  func (b Bouncer) Check(csv string) (string, bool) {
+    if csv == "" {
+      return "", true
+    }
+    candidates := strings.Split(csv, ",")
+    var accepted []string
+    for _, candidate := range candidates {
+      if !b.guests.Contains(candidate) {
+        return "", false
+      }
+      accepted = append(accepted, candidate)
+    }
+    return strings.Join(accepted, ","), true
+  }
+
+
+
+* Piste d'amélioration : fractionnement (Split) et jonction (Join) inutiles
+
+Il n'est pas nécessaire de fractionner `csv` et de renvoyer une chaîne de caractères distincte en résultat !
+
+- S'il y a un problème, on renvoie `"",`false`.
+- Autrement, on peut simplement renvoyer `csv,`true`.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/arts/ballet.svg 200 _
+
+
+
+* Solution : consommer la chaîne de caractères sans la fractionner
+
+  func (b Bouncer) Check(csv string) (string, bool) {
+    if csv == "" {
+      return "", true
+    }
+    var (
+      candidate  string
+      commaFound bool
+    )
+    for {
+      candidate, csv, commaFound = strings.Cut(csv, ",")
+      if !b.guests.Contains(candidate) {
+        return "", false
+      }
+      if !commaFound {
+        break
+      }
+    }
+    return csv, true
+  }
+
+
+
+* Problème : aucune vérification de l'ordre ou de présence de doublons
+
+Tous les candidats ne sont pas bien intentionnés... Certains sont des trolls !
+
+Par exemple, la liste de candidats suivante contient beaucoup de doublons :
+
+  foo,foo,foo,foo,...
+
+Et celle-là n'est pas ordonnée de manière lexicographique :
+
+  foo,bar,baz
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/gas-mask.svg 200 _
+
+
+
+* Solution : utilisation d'un ensemble ordonné (1/3)
+
+  type SortedSet map[string]int
+
+  func NewSet(elems ...string) SortedSet {
+    sorted := slices.Clone(elems)
+    slices.Sort(sorted)
+    sorted = slices.Compact(sorted)
+    m := make(map[string]int, len(sorted))
+    for i, elem := range sorted {
+      m[elem] = i
+    }
+    return SortedSet(m)
+  }
+
+  func (s SortedSet) Position(elem string) int {
+    pos, found := s[elem]
+    if !found {
+      return -1
+    }
+    return pos
+  }
+
+
+
+* Solution : utilisation d'un ensemble ordonné (2/3)
+
+  type Bouncer struct {
+    guests SortedSet
+  }
+
+  func NewBouncer(guests ...string) *Bouncer {
+    normalized := slices.Clone(guests)
+    for i := range guests {
+      normalized[i] = strings.ToLower(guests[i])
+    }
+    return &Bouncer{guests: NewSet(normalized...)}
+  }
+
+
+
+* Solution : utilisation d'un ensemble ordonné (3/3)
+
+  func (b Bouncer) Check(csv string) (string, bool) {
+    if csv == "" {
+      return "", true
+    }
+    var (
+      name          string
+      commaFound    bool
+      posOfLastSeen = -1
+    )
+    for {
+      name, csv, commaFound = strings.Cut(csv, ",")
+      pos := b.guests.Position(name)
+      if pos == -1 || pos <= posOfLastSeen {
+        return "", false
+      }
+      posOfLastSeen = pos
+      if !commaFound {
+        break
+      }
+    }
+    return csv, true
+  }
+
+
+
+* Autre pistes d'amélioration (à titre d'exercice)
+
+Un nom de candidat très long force la consommation intégrale de la chaîne de caractères en entrée:
+
+  foo,foobarbazfoobarbazfoobarbazfoobarbazfoobarbaz...
+
+D'autre part, on pourrait éliminer certaines vérification des limites (_bounds_check_) redondantes.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/sage.svg 200 _
+
+
+
+* CORS en deux mots
+
+- "Cross-Origin Resource Sharing" ou "partage des ressources entre origines multiples" en français.
+- Un mécanisme pour lever certaines restrictions liées à [[https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy][la _Same-Origin_Policy_]], codifié par le [[http://fetch.spec.whatwg.org/][Fetch standard]].
+- Configuré côté serveur ; implémenté par les navigateurs ; imposé aux clients.
+- Contrairement à une croyance populaire et tenace, CORS ne constitue pas une défense contre une quelconque faille de sécurité Web !
+- Deboguer des problèmes liés à CORS est sans doute la pire hantise des développeurs·euses Web !
+
+.image ./img/cors_logo.png 150 _
+
+
+
+* CORS (avec pré-vérification) en un diagramme
+
+.image ./img/preflight.svg 500 _
+
+: - CORS: what is it? hantise des dev, sujet d'incompréhension multiples et variés, regardless of ecosystem
+
+
+
+* CORS : un sujet que j'affectionne
+
+- [[https://github.com/jub0bs/cors]]
+- [[https://jub0bs.com/posts/2022-08-04-scraping-the-bottom-of-the-cors-barrel-part1/][Scraping the bottom of the CORS barrel (part 1)]]
+- [[https://jub0bs.com/posts/2023-02-08-fearless-cors/][Fearless CORS: a design philosophy for CORS middleware libraries (and a Go implementation)]]
+- [[https://jub0bs.com/posts/2024-04-27-jub0bs-cors-a-better-cors-middleware-library-for-go/][jub0bs/cors: a better CORS middleware library for Go]]
+- [[https://jub0bs.com/posts/2024-05-14-reconfigurable-cors-middleware/][Reconfigurable CORS middleware with jub0bs/cors]]
+- [[https://www.youtube.com/watch?v=5uM6z7RnReE][Useful Functional-Options Tricks for Better Libraries (GopherCon EU 2023)]]
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-hug.svg 200 _
+
+: - worked on a first CORS middleware, presented it at GopherCon; then second one because backlash against funcopts
+
+
+* jub0bs/cors : peut-être la meilleure bibliothèque CORS pour Go
+
+.image ./img/bit.ly_jub0bs-cors.png 500 _
+
+
+
+* Lien entre notre type Bouncer et CORS
+
+Une config CORS spécifie quels entêtes de requête sont autorisés : ce sont les *invités*.
+
+Certaines requêtes de pré-vérification (_preflight_) CORS contiennent un entête appelé `Access-Control-Request-Headers` : il contient les *candidats*.
+
+Le middleware CORS est censé lister les candidats autorisés dans un entête de réponse appelé `Access-Control-Allow-Headers` : c'est ce que fait *notre*méthode*Check*.
+
+.image ./img/preflight.svg 300 _
+
+
+
+* Risque de déni de service dû à github.com/rs/cors
+
+La bibliothèque CORS pour Go [[https://deps.dev/go/github.com%2Frs%2Fcors/v1.11.0/dependents][très populaire]], mais loin d'être idéale.
+
+Le traitement de l'entête `Access-Control-Request-Headers` dans rs/cors v1.10.1 est très similaire à l'implémentation initiale du `Bouncer`.
+
+Problème : un nombre même modeste de requêtes de pré-vérification falsifiées [[https://github.com/rs/cors/issues/170][occasionne une quantité prohibitive d'allocations sur le tas]], ce qui est susceptible de crasher un serveur aux resources modestes. C'est le cas de [[https://github.com/prometheus/alertmanager][l'Alert Manager de Prometheus]].
+
+Solution : [[https://github.com/rs/cors/pull/171][en gros]], les améliorations que l'on vient de couvrir ensemble.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/science/gas-mask.svg 200 _
+
+: reproduce the PoC that kills an instance of alertmanager with limited memory? would be live coding
+: - in Go, rs/cors is the most popular, various others specialised for routers
+
+
+
+* Résultats de benchmarks
+
+  goos: darwin
+  goarch: amd64
+  pkg: github.com/rs/cors
+  cpu: Intel(R) Core(TM) i7-6700HQ CPU @ 2.60GHz
+                             │     before     │                 after                 │
+                             │     sec/op     │    sec/op      vs base                │
+  PreflightAdversarialACRH-8   33214.5n ±  0%    360.9n ±  4%  -98.91% (p=0.000 n=10)
+  geomean                        82.91n          45.86n        -44.69%
+
+                             │     before      │                after                 │
+                             │      B/op       │    B/op     vs base                  │
+  PreflightAdversarialACRH-8   36904.00 ± 0%     32.00 ± 0%  -99.91% (p=0.000 n=10)
+  geomean                                    ²               -58.58%                ²
+  ¹ all samples are equal
+  ² summaries must be >0 to compute geomean
+
+                             │    before    │                after                 │
+                             │  allocs/op   │ allocs/op   vs base                  │
+  PreflightAdversarialACRH-8   4.000 ± 0%     2.000 ± 0%  -50.00% (p=0.000 n=10)
+  geomean                                 ²                -8.30%                ²
+  ¹ all samples are equal
+  ² summaries must be >0 to compute geomean
+
+
+
+* Le Patch Rewards Program de Google
+
+Google, à travers son [[https://bughunters.google.com/about/rules/open-source/4928084514701312/patch-rewards-program-rules][_Patch_Rewards_Program_]], offre des récompenses pour la correction de bogues de sécurité dans certains projets en source ouverte.
+
+Le projet [[https://github.com/google/certificate-transparency-go][github.com/google/certificate-transparency-go]] et ses dépendances directes sont dans le périmètre de ce programme, et rs/cors fait partie de ces dépendances...
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/friends/heart-balloon.svg 200 _
+
+
+
+* Quelques jours plus tard...
+
+.image ./img/5k_reward.png 400 _
+
+
+: https://github.com/jub0bs/go-perf-workshop
+: Check is called way more times than NewBouncer
+
+
+
+* Favorisez la programmation défensive
+
+- Gardez à l'esprit que nous ne vivons pas dans un monde de Bisounours.
+- L'utilisation côté serveur d'un algorithme inefficace peut permettre un déni de service ; voir [[https://cwe.mitre.org/data/definitions/405.html][CWE 405: Asymmetric Resource Consumption (Amplification)]].
+- Ignorez/renversez [[https://en.wikipedia.org/wiki/Robustness_principle][la "loi" de Postel]]. Lorsque vous implémentez une spécification, appliquez la à la lettre et tirez parti de toutes les garanties qu'elle fournit.
+
+.image https://raw.githubusercontent.com/egonelbre/gophers/master/vector/fairy-tale/knight.svg 200 _
+
+
+
+* $$$
+
+Vous aussi, vous pouvez mettre du beurre dans les épinards en [[https://bughunters.google.com/open-source-security][identifiant]] et/ou en [[https://bughunters.google.com/about/rules/open-source/4928084514701312/patch-rewards-program-rules][corrigeant]] des failles de sécurité (même mineures) dans certains projets en source ouverte.
+
+.image https://go.dev/blog/gophergala/fancygopher.jpg 300 _

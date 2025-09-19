@@ -6,6 +6,10 @@ Simply click on the link of interest below.
 
 Disclaimer: some images may not load.
 
+### 2024
+
+- [Récit d'une optimisation de performance lucrative 💸 (in French)](https://go-talks.appspot.com/github.com/jub0bs/talks/2024/06/a_lucrative_performance_optimization/main.slide)
+
 ### 2023
 
 - [Useful functional-options tricks for better libraries (GopherCon EU 2023)](https://talks.godoc.org/github.com/jub0bs/talks/2023/06/functional-options/main.slide)
