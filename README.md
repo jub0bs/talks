@@ -4,7 +4,7 @@
 
 Simply click on the link of interest below.
 
-Disclaimer: some images may not load.
+Disclaimer: some images may not load; you may need to run the slides locally instead.
 
 ### 2024
 
@@ -18,7 +18,7 @@ Disclaimer: some images may not load.
 
 - [Introduction to Go generics (Go SXB meetup, Dec. 2022)](https://talks.godoc.org/github.com/jub0bs/talks/2022/12/intro-to-generics/main.slide)
 
-## Running the talks locally
+## Running the slides locally
 
 You can run the slideshows on your machine after following a few simple steps:
 
@@ -30,7 +30,7 @@ You can run the slideshows on your machine after following a few simple steps:
     The directory in question is usually given by the following command:
 
     ```shell
-    echo `go env GOPATH`/bin
+    go env GOBIN
     ```
 
 3. Install the [`present`][present] tool:
